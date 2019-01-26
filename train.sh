@@ -6,5 +6,4 @@ python train.py \
     --how_many_training_steps 50 \
     --bottleneck_dir ./bottleneck \
     --flip_left_right \
-    -- \
     --random_crop 10 --random_scale 10 --random_brightness 10 

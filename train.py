@@ -94,6 +94,9 @@ DATA_URL = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-
 # pylint: enable=line-too-long
 BOTTLENECK_TENSOR_NAME = 'pool_3/_reshape:0'
 BOTTLENECK_TENSOR_SIZE = 2048
+BOTTLENECK_INPUT = 'input/BottleneckInputPlaceholder:0'
+LOGITS = 'final_training_ops/Wx_plus_b/MatMul:0'
+FINAL_TENSOR = 'final_result:0'
 MODEL_INPUT_WIDTH = 299
 MODEL_INPUT_HEIGHT = 299
 MODEL_INPUT_DEPTH = 3
@@ -246,15 +249,17 @@ def create_inception_graph():
   """
   with tf.Session() as sess:
     model_filename = os.path.join(
-        FLAGS.model_dir, 'classify_image_graph_def.pb')
+        FLAGS.model_dir, 'ourpets.pb')
     with gfile.FastGFile(model_filename, 'rb') as f:
       graph_def = tf.GraphDef()
       graph_def.ParseFromString(f.read())
-      bottleneck_tensor, jpeg_data_tensor, resized_input_tensor = (
+      bottleneck_tensor, jpeg_data_tensor, resized_input_tensor, bottleneck_input, logits = (
           tf.import_graph_def(graph_def, name='', return_elements=[
               BOTTLENECK_TENSOR_NAME, JPEG_DATA_TENSOR_NAME,
-              RESIZED_INPUT_TENSOR_NAME]))
-  return sess.graph, bottleneck_tensor, jpeg_data_tensor, resized_input_tensor
+              RESIZED_INPUT_TENSOR_NAME, BOTTLENECK_INPUT, LOGITS]))
+    #writer = tf.summary.FileWriter('logs', sess.graph)
+    #writer.close()
+  return sess.graph, bottleneck_tensor, jpeg_data_tensor, resized_input_tensor, bottleneck_input, logits
 
 
 def run_bottleneck_on_image(sess, image_data, image_data_tensor,
@@ -684,82 +689,53 @@ def variable_summaries(var):
     tf.summary.histogram('histogram', var)
 
 
-def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor):
-    """Adds a new softmax and fully-connected layer for training.
+def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor, bottleneck_input, logits):
+  """Adds a new softmax and fully-connected layer for training.
 
-    We need to retrain the top layer to identify our new classes, so this function
-    adds the right operations to the graph, along with some variables to hold the
-    weights, and then sets up all the gradients for the backward pass.
+  We need to retrain the top layer to identify our new classes, so this function
+  adds the right operations to the graph, along with some variables to hold the
+  weights, and then sets up all the gradients for the backward pass.
 
-    The set up for the softmax and fully-connected layers is based on:
-    https://tensorflow.org/versions/master/tutorials/mnist/beginners/index.html
+  The set up for the softmax and fully-connected layers is based on:
+  https://tensorflow.org/versions/master/tutorials/mnist/beginners/index.html
 
-    Args:
-      class_count: Integer of how many categories of things we're trying to
-      recognize.
-      final_tensor_name: Name string for the new final node that produces results.
-      bottleneck_tensor: The output of the main CNN graph.
+  Args:
+    class_count: Integer of how many categories of things we're trying to
+    recognize.
+    final_tensor_name: Name string for the new final node that produces results.
+    bottleneck_tensor: The output of the main CNN graph.
 
-    Returns:
-      The tensors for the training and cross entropy results, and tensors for the
-      bottleneck input and ground truth input.
-    """
-    with tf.name_scope('input'):
-        bottleneck_input = tf.placeholder_with_default(
-            bottleneck_tensor, shape=[None, BOTTLENECK_TENSOR_SIZE],
-            name='BottleneckInputPlaceholder')
-
-        ground_truth_input = tf.placeholder(tf.float32,
-                                            [None, class_count],
-                                            name='GroundTruthInput')
-
-    # Organizing the following ops as `final_training_ops` so they're easier
-    # to see in TensorBoard
-    layer_name = 'final_training_ops'
-    with tf.name_scope(layer_name):
-        with tf.name_scope('weights'):
-            layer_weights = tf.Variable(tf.truncated_normal([BOTTLENECK_TENSOR_SIZE, class_count], stddev=0.001), name='final_weights')
-            variable_summaries(layer_weights)
-        with tf.name_scope('biases'):
-            layer_biases = tf.Variable(tf.zeros([class_count]), name='final_biases')
-            variable_summaries(layer_biases)
-        with tf.name_scope('Wx_plus_b'):
-            logits = tf.matmul(bottleneck_input, layer_weights) + layer_biases
-            tf.summary.histogram('pre_activations', logits)
-
-    final_tensor = tf.nn.softmax(logits, name=final_tensor_name)
-    tf.summary.histogram('activations', final_tensor)
-
-    with tf.name_scope('cross_entropy'):
-        cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
-            labels=ground_truth_input, logits=logits)
-        with tf.name_scope('total'):
-            cross_entropy_mean = tf.reduce_mean(cross_entropy)
-    tf.summary.scalar('cross_entropy', cross_entropy_mean)
-
-    with tf.name_scope('train'):
-        train_step = tf.train.GradientDescentOptimizer(FLAGS.learning_rate).minimize(
-            cross_entropy_mean)
-
-    return (train_step, cross_entropy_mean, bottleneck_input, ground_truth_input,
-            final_tensor)
-
-
-def get_final_training_ops(class_count, final_tensor_name, bottleneck_tensor):
+  Returns:
+    The tensors for the training and cross entropy results, and tensors for the
+    bottleneck input and ground truth input.
+  """
   with tf.name_scope('input'):
-    bottleneck_input = tf.placeholder_with_default(
-        bottleneck_tensor, shape=[None, BOTTLENECK_TENSOR_SIZE],
-        name='BottleneckInputPlaceholder')
+    #bottleneck_input = tf.placeholder_with_default(
+    #    bottleneck_tensor, shape=[None, BOTTLENECK_TENSOR_SIZE],
+    #    name='BottleneckInputPlaceholder')
+
     ground_truth_input = tf.placeholder(tf.float32,
                                         [None, class_count],
                                         name='GroundTruthInput')
 
+  '''
   # Organizing the following ops as `final_training_ops` so they're easier
   # to see in TensorBoard
+  layer_name = 'final_training_ops'
+  with tf.name_scope(layer_name):
+    with tf.name_scope('weights'):
+      layer_weights = tf.Variable(tf.truncated_normal([BOTTLENECK_TENSOR_SIZE, class_count], stddev=0.001), name='final_weights')
+      variable_summaries(layer_weights)
+    with tf.name_scope('biases'):
+      layer_biases = tf.Variable(tf.zeros([class_count]), name='final_biases')
+      variable_summaries(layer_biases)
+    with tf.name_scope('Wx_plus_b'):
+      logits = tf.matmul(bottleneck_input, layer_weights) + layer_biases
+      tf.summary.histogram('pre_activations', logits)
+  '''
 
-  final_tensor = tf.get_default_graph().get_tensor_by_name(final_tensor_name)
-  cross_entropy_mean = tf.get_default_graph().get_tensor_by_name('cross_entropy/total/Mean')
-
+  final_tensor = tf.get_default_graph().get_tensor_by_name(FINAL_TENSOR)
+  tf.summary.histogram('activations', final_tensor)
 
   with tf.name_scope('cross_entropy'):
     cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
@@ -805,8 +781,8 @@ def main(_):
   tf.gfile.MakeDirs(FLAGS.summaries_dir)
 
   # Set up the pre-trained graph.
-  #maybe_download_and_extract()
-  graph, bottleneck_tensor, jpeg_data_tensor, resized_image_tensor = (
+  maybe_download_and_extract()
+  graph, bottleneck_tensor, jpeg_data_tensor, resized_image_tensor, bottleneck_input, logits = (
       create_inception_graph())
 
   # Look at the folder structure, and create lists of all the images.
@@ -842,7 +818,7 @@ def main(_):
   (train_step, cross_entropy, bottleneck_input, ground_truth_input,
    final_tensor) = add_final_training_ops(len(image_lists.keys()),
                                           FLAGS.final_tensor_name,
-                                          bottleneck_tensor)
+                                          bottleneck_tensor, bottleneck_input, logits)
 
   # Create the operations we need to evaluate the accuracy of our new layer.
   evaluation_step, prediction = add_evaluation_step(

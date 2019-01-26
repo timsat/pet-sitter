@@ -1,13 +1,12 @@
 import cv2
-import uuid
 import os
 import tensorflow as tf
 import numpy as np
-import vlc
-import glob
-import random
 import time
 import logging
+import handlers
+
+from utils import save_img_with_prefix
 
 logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
@@ -29,37 +28,12 @@ def predict(img, sess, tensor):
     return sess.run(tensor, {'Mul:0': np_final})
 
 
-player = None
 last_collected = 0
-
-
-def warn():
-    global player
-    LOGGER.info("Intruder!!! Trying to warn it")
-    if player is not None and player.is_playing():
-        return
-    warns = glob.glob("./warn*.ogg")
-    i = random.randrange(len(warns))
-    absname = os.path.abspath(warns[i])
-    player = vlc.MediaPlayer('file://' + absname)
-    player.play()
-
 
 labels = [line.rstrip() for line in tf.gfile.GFile(os.path.join(MODEL_PATH, 'ourpets_labels.txt'))]
 
 cv2.namedWindow("preview")
-vc = cv2.VideoCapture(0)
-
-
-def handle_shanya():
-    warn()
-    save_img_with_prefix("./shanya-")
-
-
-def save_img_with_prefix(prefix):
-    LOGGER.info("save image with prefix %s", prefix)
-    unique_filename = prefix + str(uuid.uuid4()) + ".jpg"
-    cv2.imwrite(unique_filename, frame)
+vc = cv2.VideoCapture(2)
 
 
 def check():
@@ -71,13 +45,12 @@ def check():
         LOGGER.info("%s detected %s", detected[1], p)
     else:
         LOGGER.info("%s detected", detected[1])
-    handler_name = "handle_" + detected[1]
-    if handler_name in locals():
-        locals()[handler_name]()
+    handler = getattr(handlers, "handle_" + detected[1], lambda x: None)
+    handler(frame)
     if (t - last_collected) > COLLECT_PERIOD:
         LOGGER.info("periodic collect...")
         last_collected = t
-        save_img_with_prefix(detected[1] + "-")
+        save_img_with_prefix(frame, detected[1] + "-")
 
 
 with tf.gfile.FastGFile(os.path.join(MODEL_PATH, 'ourpets.pb'), 'rb') as f:
@@ -103,13 +76,13 @@ with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
             break
         elif key == 99:   # c key
             LOGGER.info("s key pressed, saving image labeled as catty")
-            save_img_with_prefix("./catty-")
+            save_img_with_prefix(frame, "./catty-")
         elif key == 115:  # s key
             LOGGER.info("s key pressed, saving image labeled as shanya")
-            save_img_with_prefix("./shanya-")
+            save_img_with_prefix(frame, "./shanya-")
         elif key == 117:  # u key
             LOGGER.info("u key pressed, saving image labeled as unknown")
-            save_img_with_prefix("./unknown-")
+            save_img_with_prefix(frame, "./unknown-")
         elif key == 112:  # p key
             LOGGER.info("p key pressed, running predictions")
             check()
