@@ -2,12 +2,13 @@ import glob
 import os
 import random
 import uuid
-
+import time
 import cv2
 import vlc
 
-
 player = None
+last_saved_at = time.time()
+
 
 def warn():
     global player
@@ -21,5 +22,9 @@ def warn():
 
 
 def save_img_with_prefix(img, prefix):
-    unique_filename = prefix + str(uuid.uuid4()) + ".jpg"
-    cv2.imwrite(unique_filename, img)
+    global last_saved_at
+    t = time.time()
+    if t > (last_saved_at + 2):
+        last_saved_at = t
+        unique_filename = prefix + str(uuid.uuid4()) + ".jpg"
+        cv2.imwrite(unique_filename, img)

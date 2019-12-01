@@ -38,6 +38,7 @@ vc = cv2.VideoCapture(2)
 
 def check():
     global last_collected
+    global LOGGER
     p = list(zip(predict(frame, sess, tensor).tolist()[0], labels))
     t = time.time()
     detected = max(p, key=lambda x: x[0])
