@@ -1,9 +1,12 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import tensorflow as tf
+import numpy as np
 
 from tensorflow.keras import datasets, layers, models
 import matplotlib.pyplot as plt
+
+CLASS_NAMES = np.array(['cat', 'dog'])
 
 model = models.Sequential()
 model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=(300, 300, 3)))
