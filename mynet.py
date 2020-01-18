@@ -15,8 +15,11 @@ IMG_WIDTH = 300
 IMG_HEIGHT = 300
 BATCH_SIZE = 64
 
+_checkpoint_path = "training_1/cp.ckpt"
+_checkpoint_dir = os.path.dirname(_checkpoint_path)
 
-def create_model():
+
+def create_model(trainable=False):
     model = models.Sequential()
     model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=(IMG_WIDTH, IMG_HEIGHT, 3)))
     model.add(layers.MaxPooling2D((2, 2)))
@@ -27,12 +30,16 @@ def create_model():
     model.add(layers.Conv2D(64, (3, 3), activation='relu'))
     model.add(layers.Flatten())
     model.add(layers.Dense(64, activation='relu'))
-    model.add(layers.Dropout(0.2))
+    if trainable:
+        model.add(layers.Dropout(0.2))
     model.add(layers.Dense(2, activation='sigmoid'))
     model.compile(optimizer='adam',
                   loss='mse', metrics=['accuracy'])
     return model
 
+
+def load_weights(model):
+    model.load_weights(_checkpoint_path)
 
 def decode_img(img):
     # convert the compressed string to a 3D uint8 tensor
@@ -53,31 +60,22 @@ def process_path(labels_tensor, file_path):
 
 
 def show_batch(image_batch, label_batch):
-    plt.figure(figsize=(10,10))
+    plt.figure(figsize=(10, 10))
     for n in range(25):
-        ax = plt.subplot(5,5,n+1)
+        ax = plt.subplot(5, 5, n+1)
         plt.imshow(image_batch[n])
-        plt.title(str(label_batch[n]))
+        plt.title(", ".join(map(lambda x: x[1],
+            filter(lambda x: x[0] > 0.5, zip(label_batch[n].numpy(), CLASS_NAMES)))))
         plt.axis('off')
     plt.show()
 
 
-def prepare_for_training(ds, cache=True):
-    # This is a small dataset, only load it once, and keep it in memory.
-    # use `.cache(filename)` to cache preprocessing work for datasets that don't
-    # fit in memory.
-
-    return ds
-
-
-def load_dataset(filename, cache = None):
+def load_dataset(filename, cache=None):
     ds_json = None
     with open(filename, 'r') as f:
         ds_json = json.load(f)
 
     ds_size = len(ds_json)
-
-
 
     list_ds = tf.data.Dataset.from_tensor_slices(list(ds_json.keys()))
     keys_tensor = tf.constant(list(ds_json.keys()))
@@ -97,56 +95,63 @@ def load_dataset(filename, cache = None):
 
     return ds, labels_tensor, ds_size
 
-checkpoint_path = "training_1/cp.ckpt"
-checkpoint_dir = os.path.dirname(checkpoint_path)
 
-# Create a callback that saves the model's weights
-cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
-                                                 save_weights_only=True,
-                                                 verbose=1)
+if __name__ == '__main__':
+    # Create a callback that saves the model's weights
+    cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=_checkpoint_path,
+                                                     save_weights_only=True,
+                                                     verbose=1)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', '-d', type=str, required=True, help='dataset file')
+    args = parser.parse_args()
 
+    ds, labels_tensor, ds_size = load_dataset(args.dataset, cache="./mynet.tfcache")
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', '-d', type=str, required=True, help='dataset file')
-args = parser.parse_args()
+    train_size = int(0.85 * ds_size)
+    val_size = int(0.15 * ds_size)
+    print("ds_size: %d, train_ds_size: %d, val_ds_size: %d" %(ds_size, train_size, val_size))
 
-ds, labels_tensor, ds_size = load_dataset(args.dataset, cache="./mynet.tfcache")
+    val_ds = ds.skip(train_size).take(val_size).batch(val_size)
+    train_ds = ds.take(train_size)
+    train_ds = train_ds.batch(train_size)
+    # Repeat forever
+    train_ds = train_ds.repeat()
+    # `prefetch` lets the dataset fetch batches in the background while the model
+    # is training.
+    train_ds = train_ds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-train_size = int(0.85 * ds_size)
-val_size = int(0.15 * ds_size)
+    for image, label in ds.take(3):
+        print("Image shape: ", image.numpy().shape)
+        print("Label: ", label.numpy())
+        print("Label shape: ", label.shape)
 
-val_ds = ds.skip(train_size).take(val_size)
-train_ds = ds.take(train_size)
-train_ds = train_ds.batch(train_size)
-# Repeat forever
-train_ds = train_ds.repeat()
-# `prefetch` lets the dataset fetch batches in the background while the model
-# is training.
-train_ds = train_ds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    train_iter = iter(train_ds)
+    imgs_batch, labels_batch = next(train_iter)
+    show_batch(imgs_batch, labels_batch)
 
-for image, label in ds.take(3):
-    print("Image shape: ", image.numpy().shape)
-    print("Label: ", label.numpy())
-    print("Label shape: ", label.shape)
+    train = True
+    model = create_model(trainable=train)
 
-train_iter = iter(train_ds)
-imgs_batch, labels_batch = next(train_iter)
-show_batch(imgs_batch, labels_batch)
+    model.summary()
 
-model = create_model()
+    timgs_batch, tlabels_batch = next(iter(val_ds))
+    if train:
+        history = model.fit(imgs_batch, labels_batch, epochs=15, batch_size=64,
+                            validation_data=(timgs_batch, tlabels_batch), callbacks=[cp_callback])
+        imgs_batch, labels_batch = next(train_iter)
+        show_batch(imgs_batch, labels_batch)
+        plt.plot(history.history['accuracy'], label='accuracy')
+        plt.plot(history.history['val_accuracy'], label = 'val_accuracy')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.ylim([0.5, 1])
+        plt.legend(loc='lower right')
+        plt.show()
+    else:
+        loss, acc = model.evaluate(timgs_batch,  tlabels_batch, verbose=2)
+        print("Just created model, accuracy: {:5.2f}%".format(100*acc))
 
-model.summary()
+        load_weights(model)
 
-timgs_batch, tlabels_batch = next(iter(val_ds.batch(val_size)))
-history = model.fit(imgs_batch, labels_batch, epochs=100, batch_size=64,
-                    validation_data=(timgs_batch, tlabels_batch), callbacks=[cp_callback])
-imgs_batch, labels_batch = next(train_iter)
-show_batch(imgs_batch, labels_batch)
-plt.plot(history.history['accuracy'], label='accuracy')
-plt.plot(history.history['val_accuracy'], label = 'val_accuracy')
-plt.xlabel('Epoch')
-plt.ylabel('Accuracy')
-plt.ylim([0.5, 1])
-plt.legend(loc='lower right')
-plt.show()
-
+        loss, acc = model.evaluate(timgs_batch,  tlabels_batch, verbose=2)
+        print("Restored model, accuracy: {:5.2f}%".format(100*acc))
