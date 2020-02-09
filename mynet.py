@@ -6,6 +6,7 @@ import argparse
 import json
 import functools
 import os
+import datetime
 
 from tensorflow.keras import datasets, layers, models
 import matplotlib.pyplot as plt
@@ -33,7 +34,7 @@ def create_model(trainable=False):
     if trainable:
         model.add(layers.Dropout(0.2))
     model.add(layers.Dense(2, activation='sigmoid'))
-    model.compile(optimizer='adam',
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
                   loss='mse', metrics=['accuracy'])
     return model
 
@@ -82,7 +83,7 @@ def load_dataset(filename, cache=None):
 
     vals = []
     for key in ds_json.keys():
-        vals.append(','.join(ds_json[key]))
+        vals.append(','.join(ds_json[key]['labels']))
     labels_tensor = tf.lookup.StaticHashTable(tf.lookup.KeyValueTensorInitializer(keys_tensor, tf.constant(vals)), "not_found")
     ds = list_ds.map(functools.partial(process_path, labels_tensor), num_parallel_calls=tf.data.experimental.AUTOTUNE)
     ds = ds.shuffle(buffer_size=ds_size)
@@ -91,7 +92,6 @@ def load_dataset(filename, cache=None):
             ds = ds.cache(cache)
         else:
             ds = ds.cache()
-
 
     return ds, labels_tensor, ds_size
 
@@ -107,18 +107,19 @@ if __name__ == '__main__':
 
     ds, labels_tensor, ds_size = load_dataset(args.dataset, cache="./mynet.tfcache")
 
-    train_size = int(0.85 * ds_size)
-    val_size = int(0.15 * ds_size)
-    print("ds_size: %d, train_ds_size: %d, val_ds_size: %d" %(ds_size, train_size, val_size))
+    train_size = int(0.99 * ds_size)
+    val_size = int(0.01 * ds_size)
+    print("ds_size: %d, train_ds_size: %d, val_ds_size: %d" % (ds_size, train_size, val_size))
 
-    val_ds = ds.skip(train_size).take(val_size).batch(val_size)
-    train_ds = ds.take(train_size)
-    train_ds = train_ds.batch(train_size)
-    # Repeat forever
-    train_ds = train_ds.repeat()
+    train_ds = ds.take(train_size).batch(train_size).repeat()
+    val_ds = ds.skip(train_size).batch(val_size).repeat()
+
     # `prefetch` lets the dataset fetch batches in the background while the model
     # is training.
     train_ds = train_ds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+
+    val_ds = val_ds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+
 
     for image, label in ds.take(3):
         print("Image shape: ", image.numpy().shape)
@@ -135,13 +136,16 @@ if __name__ == '__main__':
     model.summary()
 
     timgs_batch, tlabels_batch = next(iter(val_ds))
+
     if train:
+        log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         history = model.fit(imgs_batch, labels_batch, epochs=15, batch_size=64,
-                            validation_data=(timgs_batch, tlabels_batch), callbacks=[cp_callback])
+                            validation_data=(timgs_batch, tlabels_batch), callbacks=[cp_callback, tensorboard_callback])
         imgs_batch, labels_batch = next(train_iter)
         show_batch(imgs_batch, labels_batch)
         plt.plot(history.history['accuracy'], label='accuracy')
-        plt.plot(history.history['val_accuracy'], label = 'val_accuracy')
+        plt.plot(history.history['val_accuracy'], label='val_accuracy')
         plt.xlabel('Epoch')
         plt.ylabel('Accuracy')
         plt.ylim([0.5, 1])
